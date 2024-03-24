@@ -49,15 +49,16 @@ public class Main {
     private static AtomicInteger bigCount = new AtomicInteger(1);
     private static AtomicInteger smallCount = new AtomicInteger(1);
     private static final Integer BOUND = 50 * 30;
-
+    private static JFrame frame = null;
+    private static int count = 0;
 
     public static void main(String[] args) {
         // 生成主窗口
-        JFrame frame = createMainWindow();
+        frame = createMainWindow();
         // 创建文本区域，用于显示文件夹名称
         JTextArea folderText = createTextArea();
         // 生成选择文件夹按钮
-        JButton chooseFolderButton = createChooseButton(frame, folderText);
+        JButton chooseFolderButton = createChooseButton(folderText);
         // 生成确定按钮
         JButton confirmButton = createConfirmButton(folderText);
         frame.add(chooseFolderButton);
@@ -77,7 +78,7 @@ public class Main {
         return confirmButton;
     }
 
-    private static JButton createChooseButton(JFrame frame, JTextArea folderText) {
+    private static JButton createChooseButton(JTextArea folderText) {
         JButton chooseFolderButton = new JButton("选择文件夹");
         chooseFolderButton.setPreferredSize(new Dimension(200, 50));
         chooseFolderButton.addActionListener(e -> {
@@ -132,27 +133,17 @@ public class Main {
         List<MyImageInfo> smallImageList = new ArrayList<>();
         // 分配大图和小图
         allocation(basicImageInfoList, bigImageList, smallImageList);
-        long start = System.currentTimeMillis();
+        count = bigImageList.size() + smallImageList.size();
         // 小图生成
-        smallAction(folderFile, smallImageList);
+        small.submit(() -> {
+            action(smallImageList, folderFile.getName(), true);
+        });
         // 大图生成
-        bigAction(folderFile, bigImageList);
-        long end = System.currentTimeMillis();
-        System.out.println("total:" + (end - start));
-    }
-
-    /**
-     * 生成大图发货图
-     *
-     * @param folderFile
-     * @param bigImageList
-     */
-    private static void bigAction(File folderFile, List<MyImageInfo> bigImageList) {
-        Map<Integer, List<MyImageInfo>> bigImageListGroup = IntStream.range(0, (bigImageList.size() + 99) / 100)
+        Map<Integer, List<MyImageInfo>> bigImageListGroup = IntStream.range(0, (bigImageList.size() + 899) / 900)
                 .boxed()
                 .collect(Collectors.toMap(
                         i -> i,
-                        i -> bigImageList.subList(i * 100, Math.min((i + 1) * 100, bigImageList.size())))
+                        i -> bigImageList.subList(i * 900, Math.min((i + 1) * 900, bigImageList.size())))
                 );
         bigImageListGroup.forEach((key, value) -> {
             big.submit(() -> {
@@ -161,11 +152,6 @@ public class Main {
         });
     }
 
-    private static void smallAction(File folderFile, List<MyImageInfo> smallImageList) {
-        small.submit(() -> {
-            action(smallImageList, folderFile.getName(), true);
-        });
-    }
 
     private static void allocation(List<BasicImageInfo> basicImageInfoList, List<MyImageInfo> bigImageList, List<MyImageInfo> smallImageList) {
         basicImageInfoList.forEach(item -> {
@@ -208,7 +194,6 @@ public class Main {
     }
 
     public static void action(List<MyImageInfo> imageList, String folderName, boolean small) {
-        long start = System.currentTimeMillis();
         XWPFDocument document = new XWPFDocument();
         CTSectPr sectPr = document.getDocument().getBody().addNewSectPr();
         setPageSize(sectPr);
@@ -217,8 +202,6 @@ public class Main {
             pageHandler(imageList, small, document, page);
         }
         write(document, small);
-        long end = System.currentTimeMillis();
-        System.out.println(end - start);
     }
 
     /**
@@ -363,6 +346,9 @@ public class Main {
             } catch (Exception e) {
                 e.printStackTrace();
             }
+        }
+        if(smallCount.get() + bigCount.get() == count){
+            JOptionPane.showMessageDialog(frame, "执行完成");
         }
     }
 
