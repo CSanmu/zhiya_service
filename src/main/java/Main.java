@@ -1,4 +1,5 @@
 import deliverygood.model.BasicImageInfo;
+import deliverygood.model.CommonConstant;
 import deliverygood.model.MyImageInfo;
 import deliverygood.utils.FileNameAnalysis;
 import javafx.util.Pair;
@@ -9,11 +10,10 @@ import org.apache.poi.xwpf.usermodel.*;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 import util.DataUtils;
 import util.PhotoUtils;
+import util.ThreadPools;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -22,10 +22,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -39,32 +35,25 @@ import java.util.stream.IntStream;
  * @date 2024/3/21 2:01 下午
  */
 public class Main {
-    private static ExecutorService small = new ThreadPoolExecutor(1, 1,
-            0L, TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<Runnable>(1024));
-    private static ExecutorService big = new ThreadPoolExecutor(4, 4,
-            0L, TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<Runnable>(1024));
-    private static AtomicInteger atomicInt = new AtomicInteger(1);
-    private static AtomicInteger bigCount = new AtomicInteger(1);
-    private static AtomicInteger smallCount = new AtomicInteger(1);
-    private static final Integer BOUND = 50 * 30;
-    private static JFrame frame = null;
-    private static int count = 0;
+    private static JFrame FRAME = null;
+    /**
+     * 大图docx文件名编号
+     */
+    private static final AtomicInteger BIG_IMAGE_NUMBER = new AtomicInteger(1);
 
     public static void main(String[] args) {
         // 生成主窗口
-        frame = createMainWindow();
+        FRAME = createMainWindow();
         // 创建文本区域，用于显示文件夹名称
         JTextArea folderText = createTextArea();
         // 生成选择文件夹按钮
         JButton chooseFolderButton = createChooseButton(folderText);
         // 生成确定按钮
         JButton confirmButton = createConfirmButton(folderText);
-        frame.add(chooseFolderButton);
-        frame.add(folderText);
-        frame.add(confirmButton);
-        frame.setVisible(true);
+        FRAME.add(chooseFolderButton);
+        FRAME.add(folderText);
+        FRAME.add(confirmButton);
+        FRAME.setVisible(true);
     }
 
     private static JButton createConfirmButton(JTextArea folderText) {
@@ -88,7 +77,7 @@ public class Main {
             fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
 
             // 显示文件夹选择对话框
-            int returnValue = fileChooser.showOpenDialog(frame);
+            int returnValue = fileChooser.showOpenDialog(FRAME);
             if (returnValue == JFileChooser.APPROVE_OPTION) {
                 // 获取选择的文件夹路径
                 String folderPath = fileChooser.getSelectedFile().getAbsolutePath();
@@ -131,14 +120,25 @@ public class Main {
         }
         List<MyImageInfo> bigImageList = new ArrayList<>();
         List<MyImageInfo> smallImageList = new ArrayList<>();
-        // 分配大图和小图
+        // 识别大图和小图
         allocation(basicImageInfoList, bigImageList, smallImageList);
-        count = bigImageList.size() + smallImageList.size();
-        // 小图生成
-        small.submit(() -> {
-            action(smallImageList, folderFile.getName(), true);
-        });
-        // 大图生成
+        // 处理小图
+        smallImageHandler(folderFile, smallImageList);
+        // 处理大图
+        bigImageHandler(folderFile, bigImageList);
+        System.out.println("一共" + CommonConstant.DOCX_COUNT.get() + "个文档");
+    }
+
+    /**
+     * 处理大图
+     *
+     * @param folderFile
+     * @param bigImageList
+     */
+    private static void bigImageHandler(File folderFile, List<MyImageInfo> bigImageList) {
+        if (CollectionUtils.isEmpty(bigImageList)) {
+            return;
+        }
         Map<Integer, List<MyImageInfo>> bigImageListGroup = IntStream.range(0, (bigImageList.size() + 899) / 900)
                 .boxed()
                 .collect(Collectors.toMap(
@@ -146,10 +146,34 @@ public class Main {
                         i -> bigImageList.subList(i * 900, Math.min((i + 1) * 900, bigImageList.size())))
                 );
         bigImageListGroup.forEach((key, value) -> {
-            big.submit(() -> {
+            ThreadPools.getInstance().submitBigTask(() -> {
+                long start = System.currentTimeMillis();
                 action(value, folderFile.getName(), false);
+                long end = System.currentTimeMillis();
+                System.out.println("大图" + key + "处理耗时:" + (end - start));
             });
+            CommonConstant.DOCX_COUNT.incrementAndGet();
         });
+    }
+
+    /**
+     * 处理小图
+     *
+     * @param folderFile
+     * @param smallImageList
+     */
+    private static void smallImageHandler(File folderFile, List<MyImageInfo> smallImageList) {
+        if (CollectionUtils.isEmpty(smallImageList)) {
+            return;
+        }
+        // 小图生成
+        ThreadPools.getInstance().submitSmallTask(() -> {
+            long start = System.currentTimeMillis();
+            action(smallImageList, folderFile.getName(), true);
+            long end = System.currentTimeMillis();
+            System.out.println("小图处理总耗时:" + (end - start));
+        });
+        CommonConstant.DOCX_COUNT.incrementAndGet();
     }
 
 
@@ -167,7 +191,7 @@ public class Main {
             if (Objects.isNull(myImageInfo)) {
                 return;
             }
-            if (area <= BOUND) {
+            if (area <= CommonConstant.BOUND) {
                 smallImageList.add(myImageInfo);
             } else {
                 bigImageList.add(myImageInfo);
@@ -202,6 +226,10 @@ public class Main {
             pageHandler(imageList, small, document, page);
         }
         write(document, small);
+        int currentCount = CommonConstant.CURRENT_DOCX_COUNT.incrementAndGet();
+        if (currentCount == CommonConstant.DOCX_COUNT.get()) {
+            JOptionPane.showMessageDialog(FRAME, "执行完成，共处理:" + CommonConstant.CURRENT_IMAGE_COUNT.get() + "张图片");
+        }
     }
 
     /**
@@ -287,9 +315,7 @@ public class Main {
             run.setFontSize(10);
             run.addPicture(is, XWPFDocument.PICTURE_TYPE_JPEG, "image" + imageNumber, pair.getKey(), pair.getValue());
             run.setText(myImageInfo.getNameNoSuffix());
-            int count = small ? smallCount.getAndIncrement() : bigCount.getAndIncrement();
-            String name = small ? "小图" : "大图";
-            System.out.println(name + "已处理" + count + "张");
+            System.out.println("已处理:" + CommonConstant.CURRENT_IMAGE_COUNT.incrementAndGet() + "张");
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -332,7 +358,7 @@ public class Main {
         if (small) {
             path = "小图.docx";
         } else {
-            path = "大图" + atomicInt.getAndIncrement() + ".docx";
+            path = "大图" + BIG_IMAGE_NUMBER.getAndIncrement() + ".docx";
         }
         File file = new File(path);
         // 将文档保存到文件系统
@@ -346,9 +372,6 @@ public class Main {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        }
-        if(smallCount.get() + bigCount.get() == count){
-            JOptionPane.showMessageDialog(frame, "执行完成");
         }
     }
 
