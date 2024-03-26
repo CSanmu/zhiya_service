@@ -1,6 +1,7 @@
 package util;
 
 import deliverygood.model.BasicImageInfo;
+import deliverygood.model.CommonConstant;
 import javafx.util.Pair;
 import org.apache.commons.math3.linear.IllConditionedOperatorException;
 
@@ -14,10 +15,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * @author chenzengsen
@@ -45,29 +43,42 @@ public class PhotoUtils {
     }
 
     /**
-     * 从文件夹内获取图片绝对目录
+     * 从文件夹内获取图片绝对目录(区分大小图)
      *
-     * @param directory 文件夹目录
+     * @param directory    文件夹目录
+     * @param multipleSize 是否获取多种尺寸文件夹 true：是 false：否
      * @return 所有图片的绝对目录
      */
-    public static List<BasicImageInfo> getAbsolutePathListFromFolder(File directory) {
+    public static List<BasicImageInfo> getAbsolutePathListFromFolder(File directory, boolean multipleSize) {
         List<BasicImageInfo> result = new ArrayList<>();
         if (!directory.exists() || !directory.isDirectory()) {
             return result;
         }
-        findImages(directory, result);
+        findImages(directory, result, multipleSize);
         return result;
     }
 
-    private static void findImages(File directory, List<BasicImageInfo> result) {
+    private static void findImages(File directory, List<BasicImageInfo> result, boolean multipleSize) {
         File[] files = directory.listFiles();
         if (files == null) {
             return;
         }
+        List<File> fileList = Arrays.asList(files);
+        Arrays.sort(files, Comparator.comparing(File::getName));
+        // 如果需要，可以再次将List转换回数组
+        files = fileList.toArray(new File[fileList.size()]);
         for (File file : files) {
             if (file.isDirectory()) {
+                // 不是多张图片但是文件夹是多种尺寸，则过滤
+                if (!multipleSize && Objects.equals(file.getName(), CommonConstant.SINGLE_HANDLER_FOLDER_NAME)) {
+                    continue;
+                }
+                // 是多张图片但是文件夹不是多种尺寸，则过滤
+                if (multipleSize && !Objects.equals(file.getName(), CommonConstant.SINGLE_HANDLER_FOLDER_NAME)) {
+                    continue;
+                }
                 // 如果是子目录，则递归调用
-                findImages(file, result);
+                findImages(file, result, multipleSize);
                 continue;
             }
             // 判断文件是否为图片

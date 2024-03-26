@@ -11,7 +11,7 @@ public class ThreadPools {
     private final ExecutorService big;
 
     public ThreadPools() {
-        small = new ThreadPoolExecutor(1, 1,
+        small = new ThreadPoolExecutor(2, 2,
                 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<Runnable>(1024),
                 new ThreadPoolExecutor.CallerRunsPolicy());

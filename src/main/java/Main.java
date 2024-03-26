@@ -1,3 +1,4 @@
+import deliverygood.enums.ImageTypeEnum;
 import deliverygood.model.BasicImageInfo;
 import deliverygood.model.CommonConstant;
 import deliverygood.model.MyImageInfo;
@@ -113,19 +114,25 @@ public class Main {
      */
     private static void selectAndAction(String folderPath) {
         File folderFile = new File(folderPath);
-        List<BasicImageInfo> basicImageInfoList = PhotoUtils.getAbsolutePathListFromFolder(folderFile);
-        if (CollectionUtils.isEmpty(basicImageInfoList)) {
+        List<BasicImageInfo> singleBasicImageInfoList = PhotoUtils.getAbsolutePathListFromFolder(folderFile, false);
+        List<BasicImageInfo> multipleSizeBasicImageInfoList = PhotoUtils.getAbsolutePathListFromFolder(folderFile, true);
+        if (CollectionUtils.isEmpty(singleBasicImageInfoList) && CollectionUtils.isEmpty(multipleSizeBasicImageInfoList)) {
             System.out.println("没有找到图片");
             return;
         }
         List<MyImageInfo> bigImageList = new ArrayList<>();
         List<MyImageInfo> smallImageList = new ArrayList<>();
+        List<MyImageInfo> multipleSizeImageList = new ArrayList<>();
         // 识别大图和小图
-        allocation(basicImageInfoList, bigImageList, smallImageList);
+        allocation(singleBasicImageInfoList, bigImageList, smallImageList);
+        // 识别多张图
+        allocationMultipleSize(multipleSizeBasicImageInfoList, multipleSizeImageList);
         // 处理小图
         smallImageHandler(folderFile, smallImageList);
         // 处理大图
         bigImageHandler(folderFile, bigImageList);
+        // 处理多张图
+        multipleSizeImageHandler(folderFile, multipleSizeImageList);
         System.out.println("一共" + CommonConstant.DOCX_COUNT.get() + "个文档");
     }
 
@@ -147,10 +154,7 @@ public class Main {
                 );
         bigImageListGroup.forEach((key, value) -> {
             ThreadPools.getInstance().submitBigTask(() -> {
-                long start = System.currentTimeMillis();
-                action(value, folderFile.getName(), false);
-                long end = System.currentTimeMillis();
-                System.out.println("大图" + key + "处理耗时:" + (end - start));
+                action(value, folderFile.getName(), ImageTypeEnum.BIG);
             });
             CommonConstant.DOCX_COUNT.incrementAndGet();
         });
@@ -168,16 +172,33 @@ public class Main {
         }
         // 小图生成
         ThreadPools.getInstance().submitSmallTask(() -> {
-            long start = System.currentTimeMillis();
-            action(smallImageList, folderFile.getName(), true);
-            long end = System.currentTimeMillis();
-            System.out.println("小图处理总耗时:" + (end - start));
+            action(smallImageList, folderFile.getName(), ImageTypeEnum.SMALL);
+        });
+        CommonConstant.DOCX_COUNT.incrementAndGet();
+    }
+
+    /**
+     * 处理多图
+     *
+     * @param folderFile
+     * @param multipleSizeImageList
+     */
+    private static void multipleSizeImageHandler(File folderFile, List<MyImageInfo> multipleSizeImageList) {
+        if (CollectionUtils.isEmpty(multipleSizeImageList)) {
+            return;
+        }
+        // 多种尺寸图生成
+        ThreadPools.getInstance().submitSmallTask(() -> {
+            action(multipleSizeImageList, folderFile.getName(), ImageTypeEnum.MULTIPLE);
         });
         CommonConstant.DOCX_COUNT.incrementAndGet();
     }
 
 
     private static void allocation(List<BasicImageInfo> basicImageInfoList, List<MyImageInfo> bigImageList, List<MyImageInfo> smallImageList) {
+        if (CollectionUtils.isEmpty(basicImageInfoList)) {
+            return;
+        }
         basicImageInfoList.forEach(item -> {
             Integer area = FileNameAnalysis.calculateArea(item.getName());
             if (Objects.isNull(area)) {
@@ -199,6 +220,27 @@ public class Main {
         });
     }
 
+    private static void allocationMultipleSize(List<BasicImageInfo> basicImageInfoList, List<MyImageInfo> multipleSizeImageList) {
+        if (CollectionUtils.isEmpty(basicImageInfoList)) {
+            return;
+        }
+        basicImageInfoList.forEach(item -> {
+            Integer area = FileNameAnalysis.calculateArea(item.getName());
+            if (Objects.isNull(area)) {
+                return;
+            }
+            Pair<Integer, Integer> widthAndHeight = FileNameAnalysis.getWidthAndHeight(item.getName());
+            if (Objects.isNull(widthAndHeight)) {
+                return;
+            }
+            MyImageInfo myImageInfo = buildMyImageInfo(item.getAbsolutePath(), item.getName(), widthAndHeight);
+            if (Objects.isNull(myImageInfo)) {
+                return;
+            }
+            multipleSizeImageList.add(myImageInfo);
+        });
+    }
+
     private static MyImageInfo buildMyImageInfo(String key, String value, Pair<Integer, Integer> widthAndHeight) {
         MyImageInfo myImageInfo = new MyImageInfo();
         myImageInfo.setWidthCm(widthAndHeight.getKey());
@@ -217,15 +259,15 @@ public class Main {
         return myImageInfo;
     }
 
-    public static void action(List<MyImageInfo> imageList, String folderName, boolean small) {
+    public static void action(List<MyImageInfo> imageList, String folderName, ImageTypeEnum imageTypeEnum) {
         XWPFDocument document = new XWPFDocument();
         CTSectPr sectPr = document.getDocument().getBody().addNewSectPr();
         setPageSize(sectPr);
-        for (int page = 0; page < getPageCount(imageList, small); page++) {
+        for (int page = 0; page < getPageCount(imageList, imageTypeEnum); page++) {
             folderInfo(document, folderName);
-            pageHandler(imageList, small, document, page);
+            pageHandler(imageList, imageTypeEnum, document, page);
         }
-        write(document, small);
+        write(document, imageTypeEnum);
         int currentCount = CommonConstant.CURRENT_DOCX_COUNT.incrementAndGet();
         if (currentCount == CommonConstant.DOCX_COUNT.get()) {
             JOptionPane.showMessageDialog(FRAME, "执行完成，共处理:" + CommonConstant.CURRENT_IMAGE_COUNT.get() + "张图片");
@@ -252,17 +294,17 @@ public class Main {
      * 处理每一页
      *
      * @param imageList
-     * @param small
+     * @param imageTypeEnum
      * @param document
      * @param page
      */
-    private static void pageHandler(List<MyImageInfo> imageList, boolean small, XWPFDocument document, int page) {
-        XWPFTable table = createTable(document, small);
+    private static void pageHandler(List<MyImageInfo> imageList, ImageTypeEnum imageTypeEnum, XWPFDocument document, int page) {
+        XWPFTable table = createTable(document, imageTypeEnum);
         // 遍历表格的每个单元格，并在其中插入图片
-        for (int row = 0; row < getRowCount(small); row++) {
-            rowHandler(imageList, small, page, table, row);
+        for (int row = 0; row < getRowCount(imageTypeEnum); row++) {
+            rowHandler(imageList, imageTypeEnum, page, table, row);
         }
-        if (page != (getPageCount(imageList, small) - 1)) {
+        if (page != (getPageCount(imageList, imageTypeEnum) - 1)) {
             XWPFParagraph paragraph = document.createParagraph();
             paragraph.createRun().addBreak(BreakType.PAGE);
         }
@@ -272,16 +314,16 @@ public class Main {
      * 每行处理
      *
      * @param imageList
-     * @param small
+     * @param imageTypeEnum
      * @param page
      * @param table
      * @param row
      */
-    private static void rowHandler(List<MyImageInfo> imageList, boolean small, int page, XWPFTable table, int row) {
+    private static void rowHandler(List<MyImageInfo> imageList, ImageTypeEnum imageTypeEnum, int page, XWPFTable table, int row) {
         // 设置行高
-        XWPFTableRow tableRow = setRowHeight(small, table, row);
-        for (int col = 0; col < getCelCount(small); col++) {
-            colHandler(imageList, small, page, row, tableRow, col);
+        XWPFTableRow tableRow = setRowHeight(imageTypeEnum, table, row);
+        for (int col = 0; col < getCelCount(imageTypeEnum); col++) {
+            colHandler(imageList, imageTypeEnum, page, row, tableRow, col);
         }
     }
 
@@ -289,31 +331,32 @@ public class Main {
      * 每个单元格处理
      *
      * @param imageList
-     * @param small
+     * @param imageTypeEnum
      * @param page
      * @param row
      * @param tableRow
      * @param col
      */
-    private static void colHandler(List<MyImageInfo> imageList, boolean small, int page, int row, XWPFTableRow tableRow, int col) {
+    private static void colHandler(List<MyImageInfo> imageList, ImageTypeEnum imageTypeEnum, int page, int row, XWPFTableRow tableRow, int col) {
         // 获取单元格
-        XWPFParagraph paragraph = setTableCellWidth(tableRow, col, small);
+        XWPFParagraph paragraph = setTableCellWidth(tableRow, col, imageTypeEnum);
         paragraph.setAlignment(ParagraphAlignment.CENTER);
         paragraph.setVerticalAlignment(TextAlignment.CENTER);
         // 创建一个运行来插入图片
         XWPFRun run = paragraph.createRun();
         // 计算图片的编号
-        int imageNumber = (page * getCelCount(small) * getRowCount(small)) + (row * getCelCount(small)) + col;
+        int imageNumber = (page * getCelCount(imageTypeEnum) * getRowCount(imageTypeEnum)) + (row * getCelCount(imageTypeEnum)) + col;
         // 构建图片的文件路径
         if (imageNumber >= imageList.size()) {
             return;
         }
         MyImageInfo myImageInfo = imageList.get(imageNumber);
-        Pair<Integer, Integer> pair = calImageRealSize(myImageInfo, small);
+        Pair<Integer, Integer> pair = calImageRealSize(myImageInfo);
         File file = PhotoUtils.imageCompressor(myImageInfo.getAbsolutePath());
         try (FileInputStream is = new FileInputStream(file)) {
             run.setFontSize(10);
             run.addPicture(is, XWPFDocument.PICTURE_TYPE_JPEG, "image" + imageNumber, pair.getKey(), pair.getValue());
+            run.addBreak();
             run.setText(myImageInfo.getNameNoSuffix());
             System.out.println("已处理:" + CommonConstant.CURRENT_IMAGE_COUNT.incrementAndGet() + "张");
         } catch (Exception e) {
@@ -325,11 +368,11 @@ public class Main {
      * 获取文档表格内的图片尺寸
      *
      * @param myImageInfo
-     * @param small
      * @return
      */
-    private static Pair<Integer, Integer> calImageRealSize(MyImageInfo myImageInfo, boolean small) {
-        if (small) {
+    private static Pair<Integer, Integer> calImageRealSize(MyImageInfo myImageInfo) {
+        Integer area = FileNameAnalysis.calculateArea(myImageInfo.getName());
+        if (area <= CommonConstant.BOUND) {
             double ratios = 21.0 / 26.0;
             double widthRatio = (26.0 / myImageInfo.getWidthCm()) * (4.1 / 26);
             double newWidth = myImageInfo.getWidthCm() * widthRatio;
@@ -353,12 +396,16 @@ public class Main {
      *
      * @param document
      */
-    private static void write(XWPFDocument document, boolean small) {
+    private static void write(XWPFDocument document, ImageTypeEnum imageTypeEnum) {
         String path = null;
-        if (small) {
+        if (Objects.equals(imageTypeEnum, ImageTypeEnum.SMALL)) {
             path = "小图.docx";
-        } else {
+        }
+        if (Objects.equals(imageTypeEnum, ImageTypeEnum.BIG)) {
             path = "大图" + BIG_IMAGE_NUMBER.getAndIncrement() + ".docx";
+        }
+        if (Objects.equals(imageTypeEnum, ImageTypeEnum.MULTIPLE)) {
+            path = "多种尺寸.docx";
         }
         File file = new File(path);
         // 将文档保存到文件系统
@@ -382,11 +429,11 @@ public class Main {
      * @param col
      * @return
      */
-    private static XWPFParagraph setTableCellWidth(XWPFTableRow tableRow, int col, boolean small) {
+    private static XWPFParagraph setTableCellWidth(XWPFTableRow tableRow, int col, ImageTypeEnum imageTypeEnum) {
         XWPFTableCell cell = tableRow.getCell(col);
         CTTblWidth ctTblWidth = cell.getCTTc().addNewTcPr().addNewTcW();
         ctTblWidth.setType(STTblWidth.PCT);
-        if (small) {
+        if (Objects.equals(imageTypeEnum, ImageTypeEnum.SMALL)) {
             // 5000/7
             ctTblWidth.setW(BigInteger.valueOf(714));
         } else {
@@ -401,12 +448,12 @@ public class Main {
     /**
      * 设置行高
      *
-     * @param small
+     * @param imageTypeEnum
      * @param table
      * @param row
      * @return
      */
-    private static XWPFTableRow setRowHeight(boolean small, XWPFTable table, int row) {
+    private static XWPFTableRow setRowHeight(ImageTypeEnum imageTypeEnum, XWPFTable table, int row) {
         XWPFTableRow tableRow = table.getRow(row);
 //        CTTrPr trPr = tableRow.getCtRow().addNewTrPr();
 //        CTHeight height = trPr.addNewTrHeight();
@@ -417,11 +464,11 @@ public class Main {
     /**
      * 获取列数
      *
-     * @param small
+     * @param imageTypeEnum
      * @return
      */
-    private static int getCelCount(boolean small) {
-        if (small) {
+    private static int getCelCount(ImageTypeEnum imageTypeEnum) {
+        if (Objects.equals(imageTypeEnum, ImageTypeEnum.SMALL)) {
             return 7;
         }
         return 6;
@@ -430,11 +477,11 @@ public class Main {
     /**
      * 获取行数
      *
-     * @param small
+     * @param imageTypeEnum
      * @return
      */
-    private static int getRowCount(boolean small) {
-        if (small) {
+    private static int getRowCount(ImageTypeEnum imageTypeEnum) {
+        if (Objects.equals(imageTypeEnum, ImageTypeEnum.SMALL)) {
             return 4;
         }
         return 5;
@@ -444,12 +491,12 @@ public class Main {
      * 创建表格
      *
      * @param document
-     * @param small
+     * @param imageTypeEnum
      * @return
      */
-    private static XWPFTable createTable(XWPFDocument document, boolean small) {
+    private static XWPFTable createTable(XWPFDocument document, ImageTypeEnum imageTypeEnum) {
         // 创建表格
-        XWPFTable table = document.createTable(getRowCount(small), getCelCount(small));
+        XWPFTable table = document.createTable(getRowCount(imageTypeEnum), getCelCount(imageTypeEnum));
         // 设置表格宽度以填满页面
         CTTblWidth tblWidth = table.getCTTbl().addNewTblPr().addNewTblW();
         tblWidth.setType(STTblWidth.PCT);
@@ -461,11 +508,11 @@ public class Main {
      * 获取页数
      *
      * @param imageList
-     * @param small
+     * @param imageTypeEnum
      * @return
      */
-    private static int getPageCount(List<MyImageInfo> imageList, boolean small) {
-        int onePageCount = getCelCount(small) * getRowCount(small);
+    private static int getPageCount(List<MyImageInfo> imageList, ImageTypeEnum imageTypeEnum) {
+        int onePageCount = getCelCount(imageTypeEnum) * getRowCount(imageTypeEnum);
         return (int) Math.ceil(imageList.size() / (double) onePageCount);
     }
 

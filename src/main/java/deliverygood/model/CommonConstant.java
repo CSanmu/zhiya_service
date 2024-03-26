@@ -27,4 +27,9 @@ public interface CommonConstant {
      * 大图与小图的尺寸分界线，小于等于这个值就是小图，大于这个值就是大图
      */
     Integer BOUND = 50 * 30;
+
+    /**
+     * 单独处理的文件夹name
+     */
+    String SINGLE_HANDLER_FOLDER_NAME = "多种尺寸";
 }
