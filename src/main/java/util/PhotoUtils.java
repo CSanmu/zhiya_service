@@ -16,6 +16,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * @author chenzengsen
@@ -24,6 +26,8 @@ import java.util.*;
 public class PhotoUtils {
 
     private static final Double ONE_INCH = 2.54;
+    private static final Pattern PATTERN = Pattern.compile("(\\d+)");
+
 
     /**
      * 通过像素和dpi算出以cm为单位的长度
@@ -64,7 +68,17 @@ public class PhotoUtils {
             return;
         }
         List<File> fileList = Arrays.asList(files);
-        Arrays.sort(files, Comparator.comparing(File::getName));
+
+        Arrays.sort(files, (o1, o2) -> {
+            Matcher o1Matcher = PATTERN.matcher(o1.getName());
+            Matcher o2Matcher = PATTERN.matcher(o2.getName());
+            if (o1Matcher.find() && o2Matcher.find()) {
+                Integer o1Number = Integer.valueOf(o1Matcher.group(1));
+                Integer o2Number = Integer.valueOf(o2Matcher.group(1));
+                return o1Number.compareTo(o2Number);
+            }
+            return o1.getName().compareTo(o2.getName());
+        });
         // 如果需要，可以再次将List转换回数组
         files = fileList.toArray(new File[fileList.size()]);
         for (File file : files) {
