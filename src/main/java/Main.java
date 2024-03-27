@@ -481,7 +481,7 @@ public class Main {
      * @return
      */
     private static int getRowCount(ImageTypeEnum imageTypeEnum) {
-        if (Objects.equals(imageTypeEnum, ImageTypeEnum.SMALL)) {
+        if (Objects.equals(imageTypeEnum, ImageTypeEnum.SMALL) || Objects.equals(imageTypeEnum, ImageTypeEnum.MULTIPLE)) {
             return 4;
         }
         return 5;
